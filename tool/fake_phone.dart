@@ -18,7 +18,14 @@ Future<void> main(List<String> args) async {
 
 Future<ServerSocket> serveFakePhone(int port, {int fps = 30}) async {
   final server = await ServerSocket.bind(InternetAddress.anyIPv4, port);
-  server.listen((client) async {
+  server.listen((client) => _serveClient(client, fps), onError: (_) {});
+  return server;
+}
+
+Future<void> _serveClient(Socket client, int fps) async {
+  // Writes after the desktop disconnects fail asynchronously; ignore them.
+  client.done.catchError((Object _) {});
+  {
     client.setOption(SocketOption.tcpNoDelay, true);
     client.add(
       GlimProtocol.encodeJson(GlimProtocol.kInfo, {
@@ -80,6 +87,7 @@ Future<ServerSocket> serveFakePhone(int port, {int fps = 30}) async {
     }
 
     client.listen((_) {}, onDone: close, onError: (_) => close());
+    client.done.then((_) => close(), onError: (_) => close());
 
     // Split the MJPEG byte stream on SOI/EOI markers.
     final buf = BytesBuilder(copy: false);
@@ -111,6 +119,5 @@ Future<ServerSocket> serveFakePhone(int port, {int fps = 30}) async {
         );
       }
     });
-  });
-  return server;
+  }
 }

@@ -134,6 +134,8 @@ class PhoneLink extends ChangeNotifier {
         timeout: const Duration(seconds: 3),
       );
       socket.setOption(SocketOption.tcpNoDelay, true);
+      // Write errors after a disconnect surface here; onDone handles retry.
+      socket.done.catchError((Object _) {});
       _socket = socket;
       _parser.reset();
       var gotData = false;
