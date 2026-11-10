@@ -1,0 +1,5 @@
+#!/bin/sh
+# Start / stop recording in a running Glim window.
+# Bind it to a global shortcut, e.g. GNOME: Settings → Keyboard →
+# Custom Shortcuts → Command: glim-toggle, Shortcut: Ctrl+Alt+R
+touch "${XDG_RUNTIME_DIR:-/tmp}/glim.toggle"

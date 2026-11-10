@@ -13,6 +13,45 @@ void main() {
       markTestSkipped('ffmpeg not installed');
       return;
     }
+    await _record((s) => s..framing = Framing.fit);
+  }, timeout: const Timeout(Duration(seconds: 60)));
+
+  for (final layout in [ReelLayout.split, ReelLayout.bubble]) {
+    test(
+      'records screen + camera (${layout.name}) on a virtual X display',
+      () async {
+        if (!await hasCommand('ffmpeg') || !await hasCommand('Xvfb')) {
+          markTestSkipped('ffmpeg / Xvfb not installed');
+          return;
+        }
+        final display = ':${90 + layout.index}';
+        final xvfb = await Process.start('Xvfb', [
+          display,
+          '-screen',
+          '0',
+          '1280x720x24',
+          '-nolisten',
+          'tcp',
+        ]);
+        await Future<void>.delayed(const Duration(seconds: 1));
+        try {
+          await _record(
+            (s) => s
+              ..layout = layout
+              ..display = display
+              ..screenRegion = const ScreenRegion(0, 0, 1280, 720),
+          );
+        } finally {
+          xvfb.kill();
+        }
+      },
+      timeout: const Timeout(Duration(seconds: 60)),
+    );
+  }
+}
+
+Future<void> _record(void Function(RecorderSettings) configure) async {
+  {
     final server = await serveFakePhone(0);
     final out = await Directory.systemTemp.createTemp('glim_test_');
     final link = PhoneLink()
@@ -23,8 +62,8 @@ void main() {
       ..outputDir = out.path
       ..outWidth = 720
       ..outHeight = 1280
-      ..framing = Framing.fit
       ..audio = AudioSource.phone;
+    configure(settings);
     final recorder = ReelRecorder();
     try {
       await link.start();
@@ -64,5 +103,5 @@ void main() {
       await server.close();
       await out.delete(recursive: true);
     }
-  }, timeout: const Timeout(Duration(seconds: 60)));
+  }
 }

@@ -4,9 +4,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'composer.dart';
 import 'phone_link.dart';
 import 'preview.dart';
 import 'recorder.dart';
+import 'screen_source.dart';
 import 'settings.dart';
 
 /// Desktop (Ubuntu) side: receives the iPhone camera and records reels.
@@ -22,12 +24,17 @@ class _ReceiverScreenState extends State<ReceiverScreen> {
   final link = PhoneLink();
   final recorder = ReelRecorder();
   final vcam = VirtualCamera();
+  final screenPreview = ScreenPreview();
   late final Listenable _all = Listenable.merge([
     settings,
     link,
     recorder,
     vcam,
+    screenPreview,
   ]);
+  List<ScreenRegion> monitors = [];
+  bool hasSlop = true;
+  StreamSubscription<FileSystemEvent>? _toggleWatch;
 
   bool hasFfmpeg = true;
   bool hasIproxy = true;
@@ -48,11 +55,57 @@ class _ReceiverScreenState extends State<ReceiverScreen> {
     _hostCtrl.text = settings.wifiHost;
     hasFfmpeg = await hasCommand('ffmpeg');
     hasIproxy = await hasCommand('iproxy');
+    hasSlop = await hasCommand('slop');
+    monitors = await ScreenCapture.listMonitors(settings.display);
+    if (settings.screenRegion == null && monitors.isNotEmpty) {
+      settings.screenRegion = monitors.first;
+    }
+    settings.addListener(_syncScreenPreview);
+    _syncScreenPreview();
+    _watchToggleFile();
     link
       ..mode = settings.linkMode
       ..host = settings.wifiHost;
     await link.start();
     if (mounted) setState(() {});
+  }
+
+  /// Runs the low-fps screen grabber only when a screen layout is active.
+  void _syncScreenPreview() {
+    final r = settings.screenRegion;
+    if (settings.layout != ReelLayout.camera && r != null && r.isValid) {
+      screenPreview.start(r, settings.display, drawMouse: settings.drawMouse);
+    } else {
+      screenPreview.stop();
+    }
+  }
+
+  /// `glim-toggle` (bind it to a global shortcut) touches this file to
+  /// start/stop recording while another window (your editor) has focus.
+  void _watchToggleFile() {
+    final dir = Directory(
+      Platform.environment['XDG_RUNTIME_DIR'] ?? Directory.systemTemp.path,
+    );
+    try {
+      _toggleWatch = dir.watch().listen((e) {
+        if (!e.path.endsWith('/glim.toggle')) return;
+        final f = File(e.path);
+        if (e.type == FileSystemEvent.delete || !f.existsSync()) return;
+        try {
+          f.deleteSync();
+        } catch (_) {}
+        if (mounted) _toggleRecord();
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _pickRegion() async {
+    try {
+      final r = await ScreenCapture.pickRegion(settings.display);
+      if (r != null) settings.update(() => settings.screenRegion = r);
+    } on ProcessException {
+      _snack("Hudud tanlash uchun slop kerak: sudo apt install slop");
+    }
   }
 
   void _onLinkChange() {
@@ -62,7 +115,11 @@ class _ReceiverScreenState extends State<ReceiverScreen> {
       if (c && settings.virtualCam) vcam.start(link, settings);
       if (!c) {
         vcam.stop();
-        if (recorder.recording) recorder.stop();
+        // In screen layouts keep going (the last camera frame is held) —
+        // a USB hiccup shouldn't ruin a coding session.
+        if (recorder.recording && settings.layout == ReelLayout.camera) {
+          recorder.stop().then(_onSaved);
+        }
       }
     }
   }
@@ -71,6 +128,9 @@ class _ReceiverScreenState extends State<ReceiverScreen> {
   void dispose() {
     _countdownTimer?.cancel();
     link.removeListener(_onLinkChange);
+    _toggleWatch?.cancel();
+    settings.removeListener(_syncScreenPreview);
+    screenPreview.dispose();
     recorder.dispose();
     vcam.dispose();
     link.dispose();
@@ -211,7 +271,11 @@ class _ReceiverScreenState extends State<ReceiverScreen> {
                       ),
                     ),
                     padding: const EdgeInsets.all(2),
-                    child: ReelPreview(link: link, settings: settings),
+                    child: ReelPreview(
+                      link: link,
+                      settings: settings,
+                      screen: screenPreview,
+                    ),
                   ),
                   if (rec) Positioned(top: 16, child: _recBadge()),
                   if (countdownLeft != null)
@@ -435,6 +499,7 @@ class _ReceiverScreenState extends State<ReceiverScreen> {
               ),
             ),
           ]),
+          _layoutSection(locked),
           if (link.connected) _phoneSection(),
           _section('Format', [
             _segmented<String>(
@@ -589,6 +654,171 @@ class _ReceiverScreenState extends State<ReceiverScreen> {
         ],
       ),
     );
+  }
+
+  Widget _layoutSection(bool locked) {
+    final s = settings;
+    final g = ReelGeometry.of(s);
+    final region = s.screenRegion;
+    return _section('Rejim', [
+      _segmented<ReelLayout>(
+        {
+          ReelLayout.camera: 'Kamera',
+          ReelLayout.split: 'Split',
+          ReelLayout.bubble: 'Doira',
+        },
+        s.layout,
+        locked ? null : (v) => s.update(() => s.layout = v),
+      ),
+      if (s.layout != ReelLayout.camera) ...[
+        if (ScreenCapture.isWayland)
+          _warning(
+            'Wayland sessiyasi: ekran qora chiqishi mumkin',
+            "Chiqib, login ekranida ⚙ → 'Ubuntu on Xorg' ni tanlang",
+          ),
+        const SizedBox(height: 10),
+        Text(
+          'Ekran hududi: ${region ?? 'tanlanmagan'}',
+          style: const TextStyle(fontSize: 12),
+        ),
+        if (g.screen != null)
+          Text(
+            'Ideal nisbat: ${_ratio(g.screen!.w, g.screen!.h)} '
+            '(${g.screen!.w}×${g.screen!.h})',
+            style: const TextStyle(fontSize: 11, color: Colors.white54),
+          ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            for (final m in monitors)
+              ChoiceChip(
+                label: Text('${m.label} ${m.w}×${m.h}'),
+                selected: region?.toString() == m.toString(),
+                onSelected: locked
+                    ? null
+                    : (_) => s.update(() => s.screenRegion = m),
+              ),
+            ActionChip(
+              avatar: const Icon(Icons.crop_free, size: 16),
+              label: const Text('Hududni belgilash'),
+              onPressed: locked ? null : _pickRegion,
+            ),
+          ],
+        ),
+        if (!hasSlop)
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: SelectableText(
+              'sudo apt install slop',
+              style: TextStyle(
+                fontSize: 11,
+                fontFamily: 'monospace',
+                color: Colors.white54,
+              ),
+            ),
+          ),
+        const SizedBox(height: 8),
+        _segmented<bool>(
+          {true: "Sig'dirish (to'liq)", false: "To'ldirish (crop)"},
+          s.screenFit,
+          locked ? null : (v) => s.update(() => s.screenFit = v),
+        ),
+        if (s.layout == ReelLayout.split) ...[
+          _labeledSlider(
+            'Ekran ulushi ${(s.splitRatio * 100).round()}%',
+            s.splitRatio,
+            0.4,
+            0.75,
+            locked ? null : (v) => s.update(() => s.splitRatio = v),
+          ),
+          _switch(
+            'Kamera tepada',
+            s.cameraOnTop,
+            locked ? null : (v) => s.update(() => s.cameraOnTop = v),
+          ),
+        ],
+        if (s.layout == ReelLayout.bubble) ...[
+          _labeledSlider(
+            'Doira hajmi ${(s.bubbleSize * 100).round()}%',
+            s.bubbleSize,
+            0.25,
+            0.55,
+            locked ? null : (v) => s.update(() => s.bubbleSize = v),
+          ),
+          Wrap(
+            spacing: 6,
+            children: [
+              for (final c in Corner.values)
+                ChoiceChip(
+                  label: Text(switch (c) {
+                    Corner.topLeft => '↖',
+                    Corner.topRight => '↗',
+                    Corner.bottomLeft => '↙',
+                    Corner.bottomRight => '↘',
+                  }),
+                  selected: s.bubbleCorner == c,
+                  onSelected: locked
+                      ? null
+                      : (_) => s.update(() => s.bubbleCorner = c),
+                ),
+            ],
+          ),
+        ],
+        _switch(
+          'Sichqonchani ko\'rsatish',
+          s.drawMouse,
+          locked ? null : (v) => s.update(() => s.drawMouse = v),
+        ),
+        const Text(
+          "Maslahat: muharrirni hudud ichiga, Glim oynasini tashqariga qo'ying. "
+          "Muharrirdan turib boshqarish uchun klaviatura yorlig'iga "
+          "glim-toggle buyrug'ini biriktiring.",
+          style: TextStyle(fontSize: 11, color: Colors.white38),
+        ),
+      ],
+    ]);
+  }
+
+  Widget _labeledSlider(
+    String label,
+    double value,
+    double min,
+    double max,
+    ValueChanged<double>? onChanged,
+  ) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const SizedBox(height: 8),
+      Text(label, style: const TextStyle(fontSize: 12)),
+      Slider(
+        value: value.clamp(min, max),
+        min: min,
+        max: max,
+        onChanged: onChanged,
+      ),
+    ],
+  );
+
+  static String _ratio(int w, int h) {
+    int gcd(int a, int b) => b == 0 ? a : gcd(b, a % b);
+    final r = w / h;
+    for (final (a, b) in const [
+      (16, 9),
+      (4, 3),
+      (1, 1),
+      (3, 4),
+      (9, 16),
+      (3, 2),
+      (2, 3),
+    ]) {
+      if ((r - a / b).abs() < 0.02) return '$a:$b';
+    }
+    final d = gcd(w, h);
+    return r >= 1
+        ? '${(r).toStringAsFixed(2)}:1 (${w ~/ d}:${h ~/ d})'
+        : '1:${(1 / r).toStringAsFixed(2)}';
   }
 
   Widget _phoneSection() {

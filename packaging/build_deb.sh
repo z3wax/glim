@@ -16,6 +16,8 @@ mkdir -p "$PKG/DEBIAN" "$PKG/opt/glim" "$PKG/usr/bin" \
 
 cp -r "$BUNDLE/." "$PKG/opt/glim/"
 ln -s /opt/glim/glim "$PKG/usr/bin/glim"
+install -m 755 packaging/glim-toggle "$PKG/usr/bin/glim-toggle"
+install -m 755 packaging/glim-toggle "$BUNDLE/glim-toggle"
 cp packaging/glim.desktop "$PKG/usr/share/applications/glim.desktop"
 cp packaging/glim.png "$PKG/usr/share/icons/hicolor/256x256/apps/glim.png"
 
@@ -27,14 +29,15 @@ Section: video
 Priority: optional
 Architecture: amd64
 Installed-Size: ${SIZE}
-Depends: libgtk-3-0 | libgtk-3-0t64, ffmpeg, usbmuxd, libusbmuxd-tools | libusbmuxd-2.0-tools, libimobiledevice-utils
-Recommends: v4l2loopback-dkms
+Depends: libgtk-3-0 | libgtk-3-0t64, ffmpeg, usbmuxd, libusbmuxd-tools | libusbmuxd-2.0-tools, libimobiledevice-utils, x11-xserver-utils
+Recommends: slop, v4l2loopback-dkms
 Maintainer: Glim <noreply@users.noreply.github.com>
 Homepage: https://github.com/z3wax/glim
 Description: Reels / Shorts recorder using the iPhone camera as a USB webcam
  Glim receives the iPhone camera (and microphone) over a USB cable through
  usbmuxd and records vertical 9:16 videos ready for Instagram Reels,
- YouTube Shorts and TikTok. It can also expose the stream as a
+ YouTube Shorts and TikTok, optionally combined with a screen recording
+ (code on top + face below, or a round camera bubble). It can also expose the stream as a
  v4l2loopback virtual webcam for OBS, Zoom or the browser.
 CTRL
 

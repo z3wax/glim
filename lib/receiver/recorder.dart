@@ -4,7 +4,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../protocol.dart';
+import 'composer.dart';
 import 'phone_link.dart';
+import 'screen_source.dart';
 import 'settings.dart';
 
 /// Builds the ffmpeg video filter that turns the phone picture into a
@@ -64,6 +66,7 @@ class ReelRecorder extends ChangeNotifier {
   Timer? _ticker;
   final _clock = Stopwatch();
   int _framesWritten = 0;
+  Uint8List? _lastFrame;
   Directory? _tmp;
   int _audioRate = 0;
   int _audioChannels = 0;
@@ -80,6 +83,7 @@ class ReelRecorder extends ChangeNotifier {
     _settings = s;
     _link = link;
     _framesWritten = 0;
+    _lastFrame = null;
     _audioRate = 0;
     _audioChannels = 0;
     _stderr.clear();
@@ -88,7 +92,7 @@ class ReelRecorder extends ChangeNotifier {
     try {
       _tmp = await Directory.systemTemp.createTemp('glim_');
       final videoPath = '${_tmp!.path}/video.mp4';
-      final filter = buildReelFilter(
+      final cameraOnly = buildReelFilter(
         width: s.outWidth,
         height: s.outHeight,
         framing: s.framing,
@@ -97,35 +101,50 @@ class ReelRecorder extends ChangeNotifier {
         mirror: s.mirror,
       );
 
+      final extraInputs = <String>[];
+      if (s.layout != ReelLayout.camera) {
+        final region = s.screenRegion;
+        if (region == null || !region.isValid) {
+          throw Exception('Ekran hududi tanlanmagan');
+        }
+        extraInputs.addAll(
+          ScreenCapture.x11grabInput(
+            region,
+            display: s.display,
+            fps: s.fps,
+            drawMouse: s.drawMouse,
+          ),
+        );
+        if (s.layout == ReelLayout.bubble) {
+          final mask = File('${_tmp!.path}/mask.pgm');
+          await mask.writeAsBytes(circleMaskPgm());
+          extraInputs.addAll([
+            '-loop',
+            '1',
+            '-framerate',
+            '${s.fps}',
+            '-i',
+            mask.path,
+          ]);
+        }
+      }
+
       _video = await Process.start('ffmpeg', [
-        '-hide_banner',
-        '-loglevel',
-        'error',
-        '-y',
-        '-f',
-        'image2pipe',
-        '-framerate',
-        '${s.fps}',
-        '-c:v',
-        'mjpeg',
-        '-i',
-        '-',
-        '-vf',
-        filter,
-        '-c:v',
-        'libx264',
-        '-preset',
-        'veryfast',
-        '-crf',
-        '${s.crf}',
-        '-profile:v',
-        'high',
-        '-pix_fmt',
-        'yuv420p',
-        '-r',
-        '${s.fps}',
-        '-g',
-        '${s.fps * 2}',
+        '-hide_banner', '-loglevel', 'error', '-y',
+        '-thread_queue_size', '512',
+        // Don't probe the pipe for seconds: inputs are opened in order, so a
+        // long probe would start the screen grab late (screen ahead of face).
+        '-probesize', '32', '-analyzeduration', '0',
+        '-f', 'image2pipe', '-framerate', '${s.fps}', '-c:v', 'mjpeg',
+        '-i', '-',
+        ...extraInputs,
+        '-filter_complex', buildComposeFilter(s, cameraOnly: cameraOnly),
+        '-map', '[v]',
+        // Code/text needs a bit more bitrate than a face to stay crisp.
+        '-c:v', 'libx264', '-preset', 'veryfast',
+        '-crf', '${s.layout == ReelLayout.camera ? s.crf : s.crf - 2}',
+        '-profile:v', 'high', '-pix_fmt', 'yuv420p',
+        '-r', '${s.fps}', '-g', '${s.fps * 2}',
         videoPath,
       ]);
       _video!.stderr
@@ -187,7 +206,8 @@ class ReelRecorder extends ChangeNotifier {
 
   void _onTick() {
     if (state != RecorderState.recording) return;
-    final frame = _link?.latestFrame;
+    // Keep repeating the last frame if the phone drops out for a moment.
+    final frame = _lastFrame = _link?.latestFrame ?? _lastFrame;
     final due = (_clock.elapsedMicroseconds * _settings.fps / 1e6).floor();
     if (frame != null && _framesWritten < due) {
       // Repeat the latest frame for every slot that is due (handles phone
@@ -226,7 +246,7 @@ class ReelRecorder extends ChangeNotifier {
     String? out;
     try {
       // Pad the video up to the exact wall-clock length.
-      final frame = _link?.latestFrame;
+      final frame = _lastFrame;
       final due = (_clock.elapsedMicroseconds * _settings.fps / 1e6).floor();
       if (frame != null && _framesWritten < due) {
         _writeRepeated(frame, due - _framesWritten);

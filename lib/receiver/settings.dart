@@ -9,6 +9,56 @@ enum Framing { fill, fit }
 
 enum AudioSource { phone, desktop, none }
 
+/// What ends up in the 9:16 frame.
+enum ReelLayout {
+  /// Only the iPhone camera.
+  camera,
+
+  /// Screen recording on top, iPhone camera below (classic coding reel).
+  split,
+
+  /// Screen recording fills the frame, camera in a round bubble.
+  bubble,
+}
+
+enum Corner { topLeft, topRight, bottomLeft, bottomRight }
+
+/// A rectangle of the X11 screen to capture (w == 0 means "not set").
+class ScreenRegion {
+  const ScreenRegion(this.x, this.y, this.w, this.h, [this.label = '']);
+
+  final int x;
+  final int y;
+  final int w;
+  final int h;
+  final String label;
+
+  bool get isValid => w > 1 && h > 1;
+
+  @override
+  String toString() => '${w}x$h +$x,$y${label.isEmpty ? '' : ' ($label)'}';
+
+  Map<String, Object?> toJson() => {
+    'x': x,
+    'y': y,
+    'w': w,
+    'h': h,
+    'label': label,
+  };
+
+  static ScreenRegion? fromJson(Object? j) {
+    if (j is! Map) return null;
+    int i(String k) => (j[k] as num?)?.toInt() ?? 0;
+    return ScreenRegion(
+      i('x'),
+      i('y'),
+      i('w'),
+      i('h'),
+      (j['label'] as String?) ?? '',
+    );
+  }
+}
+
 /// Desktop recorder settings, persisted to ~/.config/glim/settings.json.
 class RecorderSettings extends ChangeNotifier {
   int outWidth = 1080;
@@ -33,6 +83,22 @@ class RecorderSettings extends ChangeNotifier {
   bool grid = false;
   bool virtualCam = false;
   String virtualCamDevice = '/dev/video10';
+
+  ReelLayout layout = ReelLayout.camera;
+
+  /// Share of the frame height used by the screen in [ReelLayout.split].
+  double splitRatio = 0.58;
+  bool cameraOnTop = false;
+
+  /// Bubble diameter as a share of the frame width.
+  double bubbleSize = 0.38;
+  Corner bubbleCorner = Corner.bottomLeft;
+
+  /// true = letterbox the screen (whole region visible), false = crop.
+  bool screenFit = true;
+  bool drawMouse = true;
+  ScreenRegion? screenRegion;
+  String display = Platform.environment['DISPLAY'] ?? ':0';
 
   LinkMode linkMode = LinkMode.usb;
   String wifiHost = '';
@@ -98,6 +164,14 @@ class RecorderSettings extends ChangeNotifier {
     'grid': grid,
     'virtualCam': virtualCam,
     'virtualCamDevice': virtualCamDevice,
+    'layout': layout.name,
+    'splitRatio': splitRatio,
+    'cameraOnTop': cameraOnTop,
+    'bubbleSize': bubbleSize,
+    'bubbleCorner': bubbleCorner.name,
+    'screenFit': screenFit,
+    'drawMouse': drawMouse,
+    'screenRegion': screenRegion?.toJson(),
     'linkMode': linkMode.name,
     'wifiHost': wifiHost,
   };
@@ -123,6 +197,14 @@ class RecorderSettings extends ChangeNotifier {
     grid = pick('grid', grid);
     virtualCam = pick('virtualCam', virtualCam);
     virtualCamDevice = pick('virtualCamDevice', virtualCamDevice);
+    layout = pickEnum('layout', ReelLayout.values, layout);
+    splitRatio = (j['splitRatio'] as num?)?.toDouble() ?? splitRatio;
+    cameraOnTop = pick('cameraOnTop', cameraOnTop);
+    bubbleSize = (j['bubbleSize'] as num?)?.toDouble() ?? bubbleSize;
+    bubbleCorner = pickEnum('bubbleCorner', Corner.values, bubbleCorner);
+    screenFit = pick('screenFit', screenFit);
+    drawMouse = pick('drawMouse', drawMouse);
+    screenRegion = ScreenRegion.fromJson(j['screenRegion']) ?? screenRegion;
     linkMode = pickEnum('linkMode', LinkMode.values, linkMode);
     wifiHost = pick('wifiHost', wifiHost);
   }

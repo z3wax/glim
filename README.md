@@ -9,6 +9,30 @@ Glim — **Flutter**da yozilgan bitta ilova, ikki rolda ishlaydi:
 
 ## Imkoniyatlar
 
+### 🧑‍💻 Kod yozish reels: ekran + iPhone kamera
+
+Kompyuter ekranini (kod muharriri) yozib, iPhone kamerasini yuzingiz uchun veb-kamera qilib, ikkalasini **bitta 9:16 videoga** birlashtiradi:
+
+| Rejim | Ko'rinishi |
+|---|---|
+| **Kamera** | faqat iPhone kamerasi |
+| **Split** | tepada ekran (kod), pastda yuzingiz — ulushini 40–75% oralig'ida sozlash, "Kamera tepada" variantini tanlash mumkin |
+| **Doira** | ekran butun kadrda, yuzingiz oq hoshiyali dumaloq oynachada (4 burchakdan birida, hajmi sozlanadi) |
+
+- Ekran hududi: butun monitor yoki **"Hududni belgilash"** (sichqoncha bilan to'rtburchak chizasiz, `slop`). Panel ideal nisbatni ko'rsatadi (masalan Split 58% → 1080×1114 ≈ 1:1). Shunga yaqin hudud tanlasangiz, kod kadrni to'liq egallaydi.
+- **Sig'dirish** (hudud to'liq ko'rinadi) yoki **To'ldirish** (crop)
+- Sichqoncha kursorini ko'rsatish/yashirish
+- Kod matni tiniq chiqishi uchun ekranli rejimlarda sifat avtomatik oshiriladi
+- **Muharrirdan chiqmasdan boshqarish:** `glim-toggle` buyrug'ini global klaviatura yorlig'iga biriktiring:
+  *Sozlamalar → Klaviatura → Maxsus yorliqlar → +* → Buyruq: `glim-toggle`, Yorliq: `Ctrl+Alt+R`
+- Yozish paytida iPhone bir lahzaga uzilib qolsa, yozuv to'xtamaydi (oxirgi kadr ushlab turiladi)
+
+> ⚠️ Ekran yozish **X11 (Xorg)** sessiyasida ishlaydi. Ubuntu 22.04+ standart holatda Wayland'da bo'ladi: tizimdan chiqing, login ekranidagi ⚙ tugmasidan **"Ubuntu on Xorg"** ni tanlang.
+
+**Maslahatlar:** muharrir shriftini kattalashtiring (16–20pt), Glim oynasini yozilayotgan hududdan tashqariga yoki ikkinchi monitorga qo'ying, 3 soniyalik taymerdan foydalaning.
+
+### Umumiy
+
 - 🔌 **USB kabel orqali** ulanish (usbmuxd / `iproxy`) — Wi-Fi kerak emas, kechikish kam. Wi-Fi rejimi ham bor.
 - 📱 Kamera tanlash (orqa, ultra-wide, telefoto, old), zoom, chiroq — ham iPhone'dan, ham kompyuterdan boshqariladi
 - 🎬 1080×1920 yoki 720×1280, 30/60 fps, sifat (CRF) tanlash
@@ -35,7 +59,7 @@ sudo apt install ./glim_1.0.0_amd64.deb
 `.tar.gz` versiyasini ishlatsangiz, ularni qo'lda o'rnating:
 
 ```bash
-sudo apt install ffmpeg usbmuxd libusbmuxd-tools libimobiledevice-utils
+sudo apt install ffmpeg usbmuxd libusbmuxd-tools libimobiledevice-utils x11-xserver-utils slop
 ```
 
 ### iPhone (.ipa)
@@ -76,11 +100,14 @@ iPhone (AVCaptureSession) ──JPEG kadrlar + PCM ovoz──► TCP :8686
         └────────── USB kabel (usbmuxd) ── iproxy 18686:8686
                                                           │
 Ubuntu: Glim ──► 9:16 preview ──► ffmpeg (libx264 + AAC) ──► ~/Videos/Glim/*.mp4
+                                    ▲
+               ekran (x11grab) ─────┘  split: vstack · doira: alphamerge + overlay
                               └─► ffmpeg ──► /dev/video10 (v4l2loopback)
 ```
 
 - iOS qismi: `ios/Runner/AppDelegate.swift` (kamera, JPEG kodlash, Network.framework server, Flutter texture preview)
 - Protokol: `lib/protocol.dart` — `[turi: u8][uzunlik: u32 BE][ma'lumot]`
+- Kompozitsiya: `lib/receiver/composer.dart` — preview va ffmpeg filtri bitta geometriyadan hisoblanadi, shuning uchun preview'da ko'rgan narsangiz aynan videoga tushadi
 - Ubuntu qismi: `lib/receiver/` — ulanish (`phone_link.dart`), yozish (`recorder.dart`), preview, sozlamalar (`~/.config/glim/settings.json`)
 
 Video kadrlar ffmpeg'ga devor soati bo'yicha doimiy fps bilan yoziladi, shuning uchun telefon kadr tashlab yuborsa ham ovoz bilan sinxronlik buzilmaydi.
@@ -123,4 +150,6 @@ Yoki GitHub'da: **Actions → Build & Release → Run workflow** → `release_ta
 | "iPhone USB orqali topilmadi" | Kabelni qayta ulang, iPhone'da "Ishonish"ni bosing, `sudo systemctl restart usbmuxd` |
 | "iproxy topilmadi" | `sudo apt install libusbmuxd-tools` |
 | "Glim ilovasini oching…" | iPhone'da ilova ochiq va ekran yoqiq bo'lsin (fonda kamera ishlamaydi) |
+| Ekran qora chiqadi | Wayland sessiyasi — "Ubuntu on Xorg" bilan kiring |
+| "Hududni belgilash" ishlamaydi | `sudo apt install slop` |
 | Kadrlar sekin | iPhone sozlamalarida 720p yoki JPEG sifatini pasaytiring |

@@ -4,21 +4,27 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'composer.dart';
 import 'phone_link.dart';
+import 'screen_source.dart';
 import 'settings.dart';
 
-/// Live 9:16 preview that mirrors exactly what the recorder will produce.
-class ReelPreview extends StatefulWidget {
-  const ReelPreview({super.key, required this.link, required this.settings});
+/// Decodes a stream of JPEG frames and rebuilds with the newest image.
+class JpegStreamView extends StatefulWidget {
+  const JpegStreamView({
+    super.key,
+    required this.frames,
+    required this.builder,
+  });
 
-  final PhoneLink link;
-  final RecorderSettings settings;
+  final Stream<Uint8List> frames;
+  final Widget Function(BuildContext context, ui.Image? image) builder;
 
   @override
-  State<ReelPreview> createState() => _ReelPreviewState();
+  State<JpegStreamView> createState() => _JpegStreamViewState();
 }
 
-class _ReelPreviewState extends State<ReelPreview> {
+class _JpegStreamViewState extends State<JpegStreamView> {
   StreamSubscription<Uint8List>? _sub;
   ui.Image? _image;
   bool _decoding = false;
@@ -27,15 +33,15 @@ class _ReelPreviewState extends State<ReelPreview> {
   @override
   void initState() {
     super.initState();
-    _sub = widget.link.frames.listen(_onFrame);
+    _sub = widget.frames.listen(_onFrame);
   }
 
   @override
-  void didUpdateWidget(covariant ReelPreview old) {
+  void didUpdateWidget(covariant JpegStreamView old) {
     super.didUpdateWidget(old);
-    if (old.link != widget.link) {
+    if (old.frames != widget.frames) {
       _sub?.cancel();
-      _sub = widget.link.frames.listen(_onFrame);
+      _sub = widget.frames.listen(_onFrame);
     }
   }
 
@@ -78,81 +84,168 @@ class _ReelPreviewState extends State<ReelPreview> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final s = widget.settings;
-    final img = _image;
-    final connected = widget.link.connected;
+  Widget build(BuildContext context) => widget.builder(context, _image);
+}
 
-    Widget content;
-    if (img == null || !connected) {
-      content = Container(
-        color: const Color(0xFF111114),
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.phone_iphone, size: 56, color: Colors.white24),
-            const SizedBox(height: 12),
-            Text(
-              widget.link.message.isEmpty
-                  ? 'iPhone ulanmagan'
-                  : widget.link.message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white54),
-            ),
-          ],
-        ),
-      );
-    } else {
-      final raw = SizedBox(
-        width: img.width.toDouble(),
-        height: img.height.toDouble(),
-        child: RawImage(image: img, filterQuality: FilterQuality.medium),
-      );
-      if (s.framing == Framing.fill) {
-        content = FittedBox(
-          fit: BoxFit.cover,
-          alignment: Alignment(s.cropX, s.cropY),
-          clipBehavior: Clip.hardEdge,
-          child: raw,
-        );
-      } else {
-        content = Stack(
-          fit: StackFit.expand,
-          children: [
-            ImageFiltered(
-              imageFilter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-              child: FittedBox(
-                fit: BoxFit.cover,
-                clipBehavior: Clip.hardEdge,
-                child: raw,
-              ),
-            ),
-            FittedBox(fit: BoxFit.contain, child: raw),
-          ],
-        );
-      }
-      if (s.mirror) {
-        content = Transform.flip(flipX: true, child: content);
-      }
-    }
+Widget _raw(ui.Image img) => SizedBox(
+  width: img.width.toDouble(),
+  height: img.height.toDouble(),
+  child: RawImage(image: img, filterQuality: FilterQuality.medium),
+);
+
+/// Live 9:16 preview that mirrors exactly what the recorder will produce.
+class ReelPreview extends StatelessWidget {
+  const ReelPreview({
+    super.key,
+    required this.link,
+    required this.settings,
+    required this.screen,
+  });
+
+  final PhoneLink link;
+  final RecorderSettings settings;
+  final ScreenPreview screen;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = settings;
+    final g = ReelGeometry.of(s);
+    final connected = link.connected;
 
     return AspectRatio(
       aspectRatio: s.outWidth / s.outHeight,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(18),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            content,
-            if (s.grid) const _GridOverlay(),
-            if (s.safeZones && img != null && connected) const _SafeZones(),
-          ],
+        child: LayoutBuilder(
+          builder: (context, c) {
+            final k = c.maxWidth / g.width;
+            Rect r(Box b) => Rect.fromLTWH(b.x * k, b.y * k, b.w * k, b.h * k);
+
+            final camera = JpegStreamView(
+              frames: link.frames,
+              builder: (context, img) => img == null || !connected
+                  ? _cameraPlaceholder(compact: s.layout != ReelLayout.camera)
+                  : _cameraContent(img),
+            );
+
+            final children = <Widget>[
+              const ColoredBox(color: Color(0xFF0D0D10)),
+            ];
+            if (g.screen != null) {
+              children.add(
+                Positioned.fromRect(
+                  rect: r(g.screen!),
+                  child: JpegStreamView(
+                    frames: screen.frames,
+                    builder: (context, img) => img == null
+                        ? _screenPlaceholder()
+                        : FittedBox(
+                            fit: s.screenFit ? BoxFit.contain : BoxFit.cover,
+                            clipBehavior: Clip.hardEdge,
+                            child: _raw(img),
+                          ),
+                  ),
+                ),
+              );
+            }
+            if (g.round) {
+              final ring = g.ring * k;
+              children.add(
+                Positioned.fromRect(
+                  rect: r(g.camera).inflate(ring),
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white,
+                    ),
+                    padding: EdgeInsets.all(ring),
+                    child: ClipOval(child: camera),
+                  ),
+                ),
+              );
+            } else {
+              children.add(
+                Positioned.fromRect(rect: r(g.camera), child: camera),
+              );
+            }
+            if (s.grid) children.add(const _GridOverlay());
+            if (s.safeZones) children.add(const _SafeZones());
+            return Stack(fit: StackFit.expand, children: children);
+          },
         ),
       ),
     );
   }
+
+  Widget _cameraContent(ui.Image img) {
+    final s = settings;
+    Widget content;
+    if (s.layout != ReelLayout.camera || s.framing == Framing.fill) {
+      content = FittedBox(
+        fit: BoxFit.cover,
+        alignment: Alignment(s.cropX, s.cropY),
+        clipBehavior: Clip.hardEdge,
+        child: _raw(img),
+      );
+    } else {
+      content = Stack(
+        fit: StackFit.expand,
+        children: [
+          ImageFiltered(
+            imageFilter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: FittedBox(
+              fit: BoxFit.cover,
+              clipBehavior: Clip.hardEdge,
+              child: _raw(img),
+            ),
+          ),
+          FittedBox(fit: BoxFit.contain, child: _raw(img)),
+        ],
+      );
+    }
+    return s.mirror ? Transform.flip(flipX: true, child: content) : content;
+  }
+
+  Widget _cameraPlaceholder({required bool compact}) => Container(
+    color: const Color(0xFF17171C),
+    alignment: Alignment.center,
+    padding: const EdgeInsets.all(12),
+    child: compact
+        ? const Icon(Icons.phone_iphone, size: 36, color: Colors.white24)
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.phone_iphone, size: 56, color: Colors.white24),
+              const SizedBox(height: 12),
+              Text(
+                link.message.isEmpty ? 'iPhone ulanmagan' : link.message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white54),
+              ),
+            ],
+          ),
+  );
+
+  Widget _screenPlaceholder() => Container(
+    color: const Color(0xFF101014),
+    alignment: Alignment.center,
+    padding: const EdgeInsets.all(12),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.desktop_windows, size: 40, color: Colors.white24),
+        const SizedBox(height: 8),
+        Text(
+          screen.error ??
+              (settings.screenRegion == null
+                  ? 'Ekran hududini tanlang'
+                  : 'Ekran yuklanmoqda…'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.white54, fontSize: 12),
+        ),
+      ],
+    ),
+  );
 }
 
 class _GridOverlay extends StatelessWidget {
