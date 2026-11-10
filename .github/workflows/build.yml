@@ -1,0 +1,89 @@
+name: Build & Release
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: "3.47.9"
+
+jobs:
+  linux:
+    name: Ubuntu (.deb / .tar.gz)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev ffmpeg
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - name: Version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF_NAME#v}"; else V="$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')-dev.${GITHUB_RUN_NUMBER}"; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+      - run: flutter build linux --release --build-name="${{ steps.ver.outputs.version }}" --build-number="${{ github.run_number }}"
+      - run: packaging/build_deb.sh "${{ steps.ver.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: glim-linux
+          path: dist/*
+
+  ios:
+    name: iPhone (.ipa, unsigned)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - run: flutter pub get
+      - name: Version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF_NAME#v}"; else V="$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')"; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+      - run: packaging/build_ipa.sh "${{ steps.ver.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: glim-ios
+          path: dist/*.ipa
+
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## O'rnatish
+
+            **Ubuntu:** `sudo apt install ./glim_*_amd64.deb` (ffmpeg, usbmuxd, iproxy avtomatik o'rnatiladi)
+
+            **iPhone:** `Glim-*.ipa` imzolanmagan — Sideloadly / AltStore / SideStore (bepul Apple ID) yoki TrollStore orqali o'rnating.
+
+            Batafsil: README.md

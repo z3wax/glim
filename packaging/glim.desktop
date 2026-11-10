@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Glim
+GenericName=Reels Recorder
+Comment=iPhone kamerasini USB veb-kamera sifatida ishlatib Reels / Shorts (9:16) video yozish
+Exec=glim
+Icon=glim
+Terminal=false
+Categories=AudioVideo;Video;Recorder;
+Keywords=reels;shorts;iphone;webcam;camera;recorder;
+StartupWMClass=uz.glim.glim
