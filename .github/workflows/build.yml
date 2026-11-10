@@ -6,12 +6,19 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to create (e.g. v1.0.0). Empty = build only."
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
 env:
   FLUTTER_VERSION: "3.47.9"
+  # Tag pushed (refs/tags/vX) or entered when running the workflow manually.
+  RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || inputs.release_tag }}
 
 jobs:
   linux:
@@ -34,7 +41,7 @@ jobs:
       - name: Version
         id: ver
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF_NAME#v}"; else V="$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')-dev.${GITHUB_RUN_NUMBER}"; fi
+          if [[ -n "$RELEASE_TAG" ]]; then V="${RELEASE_TAG#v}"; else V="$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')-dev.${GITHUB_RUN_NUMBER}"; fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
       - run: flutter build linux --release --build-name="${{ steps.ver.outputs.version }}" --build-number="${{ github.run_number }}"
       - run: packaging/build_deb.sh "${{ steps.ver.outputs.version }}"
@@ -57,7 +64,7 @@ jobs:
       - name: Version
         id: ver
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF_NAME#v}"; else V="$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')"; fi
+          if [[ -n "$RELEASE_TAG" ]]; then V="${RELEASE_TAG#v}"; else V="$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')"; fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
       - run: packaging/build_ipa.sh "${{ steps.ver.outputs.version }}"
       - uses: actions/upload-artifact@v4
@@ -67,7 +74,7 @@ jobs:
 
   release:
     name: GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
     needs: [linux, ios]
     runs-on: ubuntu-latest
     steps:
@@ -77,6 +84,9 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: Glim ${{ env.RELEASE_TAG }}
           files: dist/*
           generate_release_notes: true
           body: |

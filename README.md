@@ -110,9 +110,11 @@ dart run tool/fake_phone.dart     # so'ng Glim'da Wi-Fi → 127.0.0.1
 `v*` teg push qilinsa GitHub Actions `.deb`, `.tar.gz` va `.ipa` ni yig'ib, avtomatik Release yaratadi:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
+
+Yoki GitHub'da: **Actions → Build & Release → Run workflow** → `release_tag` ga `v1.0.1` yozing.
 
 ## Muammolar
 
