@@ -423,8 +423,9 @@ class VirtualCamera extends ChangeNotifier {
             _proc = null;
             _sub?.cancel();
             _sub = null;
-            if (code != 0)
+            if (code != 0) {
               error = 'Virtual kamera to\'xtadi: ${err.toString().trim()}';
+            }
             notifyListeners();
           }
         }),

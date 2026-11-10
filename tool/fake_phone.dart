@@ -90,8 +90,9 @@ Future<ServerSocket> serveFakePhone(int port, {int fps = 30}) async {
       for (var i = 1; i < data.length; i++) {
         if (data[i - 1] == 0xFF && data[i] == 0xD9) {
           final frame = Uint8List.sublistView(data, start, i + 1);
-          if (!closed)
+          if (!closed) {
             client.add(GlimProtocol.encode(GlimProtocol.kVideo, frame));
+          }
           start = i + 1;
         }
       }
